@@ -80,8 +80,7 @@ getenv_or <- function(name, default) {
 
 ```{r gsea-config}
 
-# By default, discover every GLM output directory (between-group + within-group sex)
-# strata) under outputs/. Falls back to the canonical single directory if none
+# Discover the between-group and within-group-sex GLM outputs under results/dge/. Falls back to the canonical single directory if none
 # are present yet.
 default_results_dirs <- {
   outputs_root <- file.path(PROJECT_ROOT, "results", "dge")
@@ -123,7 +122,7 @@ cat("Project root :", PROJECT_ROOT, "\n")
 cat("Results dirs :\n")
 cat(paste0("  - ", RESULTS_DIRS, collapse = "\n"), "\n")
 cat("Output dir   :", OUT_DIR,      "\n\n")
-DISEASE_ORDER <- c("AD_spectrum", "AD", "MCI", "LB_spectrum", "LBD", "PD", "MCI-PD")
+DISEASE_ORDER <- c("HC_vs_AD_spectrum", "HC_vs_LB_spectrum", "AD_spectrum_vs_LB_spectrum", "AD_spectrum", "AD", "MCI", "LB_spectrum", "LBD", "PD", "MCI-PD")
 
 comparison_disease <- function(x) {
   str_remove(x, "_vs_HC_(Combined|F|M)$")
@@ -134,6 +133,7 @@ comparison_stratum <- function(x) {
     str_detect(x, "_Combined$") ~ "All",
     str_detect(x, "_F$") ~ "F",
     str_detect(x, "_M$") ~ "M",
+    x %in% c("HC_vs_AD_spectrum", "HC_vs_LB_spectrum", "AD_spectrum_vs_LB_spectrum") ~ "All",
     TRUE ~ NA_character_
   )
 }
@@ -196,6 +196,13 @@ parse_filename <- function(fn) {
   first <- tryCatch(read_csv(fn, show_col_types = FALSE, n_max = 1),
                     error = function(e) NULL)
   if (!is.null(first)) {
+    # Native Step 1 limma tables carry the exact fitted contrast. Keep its
+    # direction and label; do not relabel HC-minus-disease as disease-minus-HC.
+    if (all(c("contrast", "section", "comparison_group", "reference_group") %in% names(first)) &&
+        nrow(first) == 1L && identical(as.character(first$section[1]), "between_group")) {
+      contrast <- as.character(first$contrast[1])
+      return(list(disease = contrast, stratum = "Combined", key = contrast))
+    }
     if ("comparison_group" %in% names(first) &&
         !is.na(first$comparison_group[1]) &&
         nzchar(as.character(first$comparison_group[1]))) {
@@ -242,7 +249,7 @@ per_comparison_files <- c(
       list.files(results_dir, pattern = "_LMM_FDR_results\\.csv$", full.names = TRUE),
       list.files(file.path(results_dir, "per_comparison"),
                  pattern = "_LMM_FDR_results\\.csv$", full.names = TRUE),
-      list.files(results_dir, pattern = "^toptable_.*_vs_HC\\.csv$", full.names = TRUE)
+      list.files(results_dir, pattern = "^toptable_(HC_vs_AD_spectrum|HC_vs_LB_spectrum|AD_spectrum_vs_LB_spectrum|.*_vs_HC)\\.csv$", full.names = TRUE)
     )
   }), use.names = FALSE)
 )
@@ -392,6 +399,13 @@ extract_cohort_counts <- function(fp) {
                   n_subjects = first$N_Subjects_Model[1]))
   }
 
+  if (all(c("section", "n_comparison", "n_reference") %in% names(first)) &&
+      identical(as.character(first$section[1]), "between_group")) {
+    n <- as.numeric(first$n_comparison[1]) + as.numeric(first$n_reference[1])
+    return(tibble(Disease = m$disease, Stratum = m$stratum,
+                  n_samples = n, n_subjects = n))
+  }
+
   disease_group <- str_replace(m$disease, "-", "_")
   local_group_sizes_path <- file.path(dirname(fp), "group_sizes.csv")
   local_group_sizes <- if (file.exists(local_group_sizes_path)) {
@@ -490,8 +504,8 @@ clean_geneset_members <- function(name, members) {
 # (public MSigDB sets only); set MANUSCRIPT_BONE_GENE_LIST /
 # MANUSCRIPT_SENESCENCE_GENE_LIST to a text file (one gene symbol per line) to
 # fold a custom panel in.
-default_bone_gene_list <- file.path(PROJECT_ROOT, "data", "bone_gene_list.txt")
-default_senescence_gene_list <- file.path(PROJECT_ROOT, "data", "senescence_gene_list.txt")
+default_bone_gene_list <- file.path(PROJECT_ROOT, "reference", "bone_gene_list.txt")
+default_senescence_gene_list <- file.path(PROJECT_ROOT, "reference", "senescence_gene_list.txt")
 gs_custom_raw <- list(
   `Self-defined_Bone` = read_gene_list(
     getenv_or("MANUSCRIPT_BONE_GENE_LIST", default_bone_gene_list),
@@ -1876,11 +1890,11 @@ for (d in c(FIG2_DIR, FIG3_DIR, FIG6_DIR, FIG7_DIR, SUPP_VOLCANO_DIR))
 
 # (panel|contrast) -> output folder + figure-numbered filename.
 volcano_targets <- list(
-  "bone|AD_spectrum_vs_HC"          = c(FIG2_DIR, "2A_bone_AD-spectrum_vs_HC"),
-  "bone|LB_spectrum_vs_HC"          = c(FIG2_DIR, "2B_bone_LB-spectrum_vs_HC"),
+  "bone|HC_vs_AD_spectrum"          = c(FIG2_DIR, "2A_bone_HC_vs_AD-spectrum"),
+  "bone|HC_vs_LB_spectrum"          = c(FIG2_DIR, "2B_bone_HC_vs_LB-spectrum"),
   "bone|AD_spectrum_vs_LB_spectrum" = c(FIG2_DIR, "2C_bone_AD-spectrum_vs_LB-spectrum"),
-  "senescence|AD_spectrum_vs_HC"          = c(FIG3_DIR, "3A_senescence_AD-spectrum_vs_HC"),
-  "senescence|LB_spectrum_vs_HC"          = c(FIG3_DIR, "3B_senescence_LB-spectrum_vs_HC"),
+  "senescence|HC_vs_AD_spectrum"          = c(FIG3_DIR, "3A_senescence_HC_vs_AD-spectrum"),
+  "senescence|HC_vs_LB_spectrum"          = c(FIG3_DIR, "3B_senescence_HC_vs_LB-spectrum"),
   "senescence|AD_spectrum_vs_LB_spectrum" = c(FIG3_DIR, "3C_senescence_AD-spectrum_vs_LB-spectrum"),
   "bone|sex_HC"          = c(FIG6_DIR, "6A_bone_HC_male_vs_female"),
   "bone|sex_AD_spectrum" = c(FIG6_DIR, "6B_bone_AD-spectrum_male_vs_female"),
@@ -1920,7 +1934,7 @@ alias_label <- function(sym) {
 dict <- read_csv(file.path(PROJECT_ROOT, "data",
                            "SADRC_CSF_SomaScan_protein_metadata_dict.csv"), show_col_types = FALSE)
 read_panel_list <- function(f) {
-  g <- trimws(readLines(file.path(PROJECT_ROOT, "data", f), warn = FALSE))
+  g <- trimws(readLines(file.path(PROJECT_ROOT, "reference", f), warn = FALSE))
   unique(g[nzchar(g)])
 }
 bone_genes <- read_panel_list("bone_gene_list.txt")
@@ -2123,7 +2137,7 @@ make_cor_long <- function(bone_genes_sel, sen_genes_sel) {
 }
 
 # ── Proteins passing each threshold ─────────────────────────────────────────
-DISEASE_CONTRASTS_USE <- c("AD_spectrum_vs_HC", "LB_spectrum_vs_HC",
+DISEASE_CONTRASTS_USE <- c("HC_vs_AD_spectrum", "HC_vs_LB_spectrum",
                             "AD_spectrum_vs_LB_spectrum")
 
 bone_fdr_genes <- panel_res %>%
@@ -2367,7 +2381,7 @@ if (!exists("make_cor_long")) {
   }
 }
 
-DISEASE_CONTRASTS_USE <- c("AD_spectrum_vs_HC", "LB_spectrum_vs_HC",
+DISEASE_CONTRASTS_USE <- c("HC_vs_AD_spectrum", "HC_vs_LB_spectrum",
                             "AD_spectrum_vs_LB_spectrum")
 
 # FDR significant proteins
@@ -2595,12 +2609,9 @@ cat("  wrote bone_senescence_network_expanded.png\n")
 
 # Part 4 - Protein x neuro-marker association heatmaps (Figures 4 & 5)
 
-Figures 4/5 relate each bone / senescence panel protein to **neurodegeneration-marker
-proteins measured on the same SomaScan assay** (tau/MAPT, NfL/NEFL, NfH/NEFH, GFAP,
-amyloid/APP, a-synuclein/SNCA, neurogranin/NRGN, YKL-40/CHI3L1). No clinical CSF
-biomarkers (Abeta42, p-tau, t-tau, NfL immunoassays) exist in this dataset, so these
-are **proxy** markers and the associations are **within-platform protein co-variation**,
-not validation against orthogonal clinical assays.
+Figures 4/5 relate bone and senescence panel proteins to the clinical Lumipulse
+CSF biomarkers loaded in this section. The workbook and participant linkage are
+restricted inputs and are not distributed with this repository.
 
 ## 4a. Association configuration
 
@@ -2672,7 +2683,7 @@ fit_pair_bio <- function(y_key, biomarker, bc, adjust_sex) {
   list(beta = co["x","Estimate"], p = co["x","Pr(>|t|)"], n = nrow(d))
 }
 
-DISEASE_CONTRASTS <- c("AD_spectrum_vs_HC", "LB_spectrum_vs_HC", "AD_spectrum_vs_LB_spectrum")
+DISEASE_CONTRASTS <- c("HC_vs_AD_spectrum", "HC_vs_LB_spectrum", "AD_spectrum_vs_LB_spectrum")
 
 run_assoc <- function(panel_name) {
   hits <- panel_res %>% filter(panel == panel_name)
@@ -2714,7 +2725,7 @@ cat("  bone assoc rows:", nrow(bone_assoc), "| senescence assoc rows:", nrow(sen
 
 ```{r assoc-heatmap}
 # Column-annotation palettes (Fig 4/5: disease selection contrast + discovery source).
-CONTRAST_SHORT <- c(AD_spectrum_vs_HC = "AD vs HC", LB_spectrum_vs_HC = "LB vs HC",
+CONTRAST_SHORT <- c(HC_vs_AD_spectrum = "HC vs AD", HC_vs_LB_spectrum = "HC vs LB",
                     AD_spectrum_vs_LB_spectrum = "AD vs LB")
 CONTRAST_COL <- c("AD vs HC" = "#1b9e77", "LB vs HC" = "#d95f02", "AD vs LB" = "#7570b3",
                   "multiple" = "#444444", "(panel)" = "#cccccc")

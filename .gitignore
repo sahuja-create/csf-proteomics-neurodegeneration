@@ -60,3 +60,8 @@ assoc_input.rds
 *.RDS
 .env
 .env.*
+
+# Rendered analysis notebooks may include restricted input or linkage values
+/scripts/*.html
+/scripts/*.pdf
+/scripts/*.md

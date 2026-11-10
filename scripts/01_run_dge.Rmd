@@ -19,8 +19,8 @@ reduced to their baseline (earliest) visit), so an ordinary fixed-effects genera
 used - no repeated-measures / mixed model. It produces exactly the comparisons the analysis plan calls for:
 
 **Part I - between groups (all participants):**
-1. `AD_spectrum_vs_HC`            (HC vs AD-MCI + AD)
-2. `LB_spectrum_vs_HC`            (HC vs PD-MCI + PDD/DLB ... i.e. the LB spectrum)
+1. `HC_vs_AD_spectrum`            (HC vs AD-MCI + AD)
+2. `HC_vs_LB_spectrum`            (HC vs PD-MCI + PDD/DLB ... i.e. the LB spectrum)
 3. `AD_spectrum_vs_LB_spectrum`   ((AD-MCI + AD) vs (PD-MCI + PDD/DLB))
 
 **Part II - male vs female WITHIN each group:**
@@ -29,7 +29,7 @@ used - no repeated-measures / mixed model. It produces exactly the comparisons t
 3. `sex_LB_spectrum`   (M vs F within LB-spectrum)
 
 Outputs:
-`results/dge/glm_combined_baseAge55/`           - Part I top tables + group_sizes + protein_metadata + assoc_input.rds
+`results/dge/glm_combined_baseAge55/`           - Part I top tables + group_sizes + protein_metadata
 `results/dge/glm_combined_baseAge55_sexcontrast/` - Part II (within-group male-vs-female) top tables
 
 ```{r setup, include=FALSE}
@@ -42,6 +42,8 @@ suppressPackageStartupMessages({
   library(readr); library(readxl); library(dplyr); library(tibble); library(limma)
 })
 ```
+
+`results/dge/assoc_input.rds` - private participant-level input for association analyses.
 
 ## Configuration & paths
 
