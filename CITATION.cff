@@ -1,0 +1,82 @@
+cff-version: 1.2.0
+message: If you use this analysis code, please cite this software archive.
+type: software
+title: CSF proteomics reveals bone remodeling and cellular senescence signatures across the Alzheimer's
+  disease and Lewy body disease spectra
+authors:
+- family-names: Pinnamaneni
+  given-names: Ananya
+  affiliation: Department of Biology, Duke University, Durham, NC, USA
+- family-names: Zhai
+  given-names: Ting
+  affiliation: Department of Genetics, Stanford University, Stanford, CA, USA
+- family-names: Ahuja
+  given-names: Sneha
+  affiliation: Department of Molecular, Cell and Systems Biology, University of California-Riverside,
+    Riverside, CA, USA
+- family-names: Marella
+  given-names: Arvind
+  affiliation: School of Computer, Data & Information Sciences, University of Wisconsin-Madison, Madison,
+    WI, USA
+- family-names: Shokri Varniab
+  given-names: Zahra
+  affiliation: Department of Radiology, Stanford University, Stanford, CA, USA
+- family-names: Moran-Losada
+  given-names: Patricia
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Channappa
+  given-names: Divya
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Se-Hwee Oh
+  given-names: Hamilton
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Rutledge
+  given-names: Jarod
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Zeineh
+  given-names: Michael
+  affiliation: Department of Radiology, Stanford University, Stanford, CA, USA
+- family-names: Kaipa
+  given-names: Siddharth
+  affiliation: Department of Genetics, Stanford University, Stanford, CA, USA
+- family-names: Wilson
+  given-names: Edward N.
+  affiliation: Department of Genetics, Stanford University, Stanford, CA, USA
+- family-names: Hwang
+  given-names: Janet
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Longo
+  given-names: Frank M.
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Ramirez
+  given-names: Veronica
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Poston
+  given-names: Kathleen
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA
+- family-names: Wyss-Coray
+  given-names: Tony
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA; The Phil and Penny Knight Initiative for Brain Resilience, Stanford University,
+    Stanford, CA, USA
+- family-names: Henderson
+  given-names: Victor W.
+  affiliation: Department of Neurology and Neurological Sciences, Stanford University School of Medicine,
+    Stanford, CA, USA; Department of Epidemiology and Population Health, Stanford University, Stanford,
+    CA, USA
+- family-names: Suryadevara
+  given-names: Vidyani
+  affiliation: Department of Genetics, Stanford University, Stanford, CA, USA
+repository-code: https://github.com/sahuja-create/csf-proteomics-neurodegeneration
+abstract: R analysis code and supporting gene sets and protein annotations for the accompanying CSF proteomics
+  study. The workflow includes differential protein expression, gene set enrichment, figure generation,
+  and biomarker association analyses. Restricted participant-level proteomic and clinical input data are
+  not included.

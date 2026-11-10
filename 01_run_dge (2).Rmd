@@ -1,0 +1,272 @@
+---
+title: "CSF differential expression (limma fixed-effects + eBayes)"
+output: html_document
+date: "2026-06-09"
+---
+
+**Step 1** of the pipeline. It fits a per-protein linear model (limma `lmFit` +
+`eBayes`) and writes the per-comparison **top tables** that Step 2
+(`scripts/02_gsea_and_figures.Rmd`) turns into volcano plots and heatmaps.
+
+Three analysis groups (per the manuscript outline):
+
+* `HC`
+* `AD_spectrum` = AD-MCI + AD-dementia  (Diagnosis `MCI` + `AD`)
+* `LB_spectrum` = Lewy body disease spectrum = PD + PD-MCI + PDD/DLB  (Diagnosis `PD` + `MCI-PD` + `LBD`)
+
+The cohort is analysed as **one sample per participant** (the single repeated participant is
+reduced to their baseline (earliest) visit), so an ordinary fixed-effects general linear model (GLM) is
+used - no repeated-measures / mixed model. It produces exactly the comparisons the analysis plan calls for:
+
+**Part I - between groups (all participants):**
+1. `AD_spectrum_vs_HC`            (HC vs AD-MCI + AD)
+2. `LB_spectrum_vs_HC`            (HC vs PD-MCI + PDD/DLB ... i.e. the LB spectrum)
+3. `AD_spectrum_vs_LB_spectrum`   ((AD-MCI + AD) vs (PD-MCI + PDD/DLB))
+
+**Part II - male vs female WITHIN each group:**
+1. `sex_HC`            (M vs F within HC)
+2. `sex_AD_spectrum`   (M vs F within AD-spectrum)
+3. `sex_LB_spectrum`   (M vs F within LB-spectrum)
+
+Outputs:
+`results/dge/glm_combined_baseAge55/`           - Part I top tables + group_sizes + protein_metadata + assoc_input.rds
+`results/dge/glm_combined_baseAge55_sexcontrast/` - Part II (within-group male-vs-female) top tables
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = TRUE, warning = FALSE)
+Sys.setenv(VROOM_CONNECTION_SIZE = 2^24)
+```
+
+```{r libraries}
+suppressPackageStartupMessages({
+  library(readr); library(readxl); library(dplyr); library(tibble); library(limma)
+})
+```
+
+## Configuration & paths
+
+```{r config}
+find_project_root <- function() {
+  cand <- tryCatch(normalizePath(dirname(knitr::current_input(dir = TRUE))),
+                   error = function(e) normalizePath(getwd()))
+  for (i in 1:5) {
+    if (dir.exists(file.path(cand, "data"))) return(cand)
+    cand <- dirname(cand)
+  }
+  normalizePath(getwd())
+}
+root_dir <- find_project_root()
+data_dir <- file.path(root_dir, "data")
+out_base <- file.path(root_dir, "results", "dge")
+
+expr_file    <- file.path(data_dir, "SADRC_CSF_SomaScan_sample_protein_expression_hybNorm.medNormInt.medNormRefSMP.anmlQC.anmlSMP_norm.csv")
+smeta_file   <- file.path(data_dir, "SADRC_CSF_SomaScan_sample_metadata.csv")
+demo_file    <- file.path(data_dir, "SADRC_CSF_basic_demographics.xlsx")
+protein_file <- file.path(data_dir, "SADRC_CSF_SomaScan_protein_metadata_dict.csv")
+
+subject_id_field <- "PIDN"
+min_baseline_age <- 55
+group_mode       <- "combined"
+group_levels     <- c("HC", "AD_spectrum", "LB_spectrum")
+message("Project root: ", root_dir)
+```
+
+## Load CSF data
+
+```{r load}
+message("[1/4] Loading CSF data")
+expr_raw     <- read_csv(expr_file, show_col_types = FALSE)
+smeta        <- read_csv(smeta_file, show_col_types = FALSE, guess_max = 5000, name_repair = "unique")
+demo         <- read_excel(demo_file)
+protein_dict <- read_csv(protein_file, show_col_types = FALSE)
+
+sid_cols <- grep("^SampleId", names(smeta), value = TRUE)
+if (length(sid_cols) > 1L) {
+  stopifnot(identical(as.character(smeta[[sid_cols[1]]]), as.character(smeta[[sid_cols[2]]])))
+  smeta[[sid_cols[2]]] <- NULL
+  names(smeta)[names(smeta) == sid_cols[1]] <- "SampleId"
+}
+expr_raw$SampleId <- as.character(expr_raw$SampleId)
+smeta$SampleId    <- as.character(smeta$SampleId)
+demo$SampleId     <- as.character(demo$SampleId)
+
+if (!"Diagnosis_group" %in% names(demo) && "Diagnosis" %in% names(demo)) demo$Diagnosis_group <- demo$Diagnosis
+if (!"Age_years"       %in% names(demo) && "Age"       %in% names(demo)) demo$Age_years       <- demo$Age
+```
+
+## QC and log2 replicate averaging
+
+```{r qc}
+message("[2/4] QC filtering and log2 replicate averaging")
+soma_cols <- grep("^SL[0-9]", names(expr_raw), value = TRUE)
+keep_ids  <- intersect(smeta$SampleId[smeta$RowCheck == "PASS"],
+                       smeta$SampleId[smeta$SampleType == "Sample"])
+expr <- expr_raw %>% filter(SampleId %in% keep_ids)
+soma_mat_raw <- as.matrix(expr[, soma_cols, drop = FALSE]); rownames(soma_mat_raw) <- expr$SampleId
+stopifnot(all(!is.na(soma_mat_raw)), all(soma_mat_raw > 0))
+log2_long   <- log2(soma_mat_raw)
+log2_byid   <- rowsum(log2_long, group = rownames(log2_long), reorder = TRUE)
+counts_byid <- as.numeric(table(rownames(log2_long))[rownames(log2_byid)])
+expr_mat_all <- t(log2_byid / counts_byid)
+message("  expression matrix: ", nrow(expr_mat_all), " proteins x ", ncol(expr_mat_all), " samples")
+
+ann <- protein_dict %>% select(SomaKey, SomaId, Target, TargetFullName, UniProt, EntrezGeneSymbol)
+```
+
+## Build the analysis covariates (3 groups, all participants)
+
+```{r covar}
+demo_u <- demo %>%
+  filter(SampleId %in% colnames(expr_mat_all)) %>%
+  distinct(SampleId, .keep_all = TRUE) %>%
+  mutate(source_subject_id = as.character(.data[[subject_id_field]]))
+smeta_u <- smeta %>%
+  filter(SampleId %in% colnames(expr_mat_all)) %>%
+  distinct(SampleId, .keep_all = TRUE) %>%
+  select(SampleId, SampleType, PlateId, PlateRunDate, ScannerID, RowCheck)
+
+covar <- demo_u %>%
+  left_join(smeta_u, by = "SampleId") %>%
+  mutate(
+    group_combined = case_when(
+      Diagnosis_group == "HC"                       ~ "HC",
+      Diagnosis_group %in% c("MCI", "AD")           ~ "AD_spectrum",
+      Diagnosis_group %in% c("PD", "MCI-PD", "LBD") ~ "LB_spectrum",
+      TRUE ~ NA_character_),
+    group_var    = factor(group_combined, levels = group_levels),
+    Sex          = factor(Sex),
+    SubjectID    = factor(paste0("S", match(source_subject_id, unique(source_subject_id)))),
+    age_at_visit = as.numeric(Age_years)
+  ) %>%
+  filter(!is.na(group_var), !is.na(age_at_visit), !is.na(Sex))
+
+baseline_age <- covar %>% group_by(SubjectID) %>%
+  summarise(b = min(age_at_visit, na.rm = TRUE), .groups = "drop")
+covar <- covar %>% filter(SubjectID %in% baseline_age$SubjectID[baseline_age$b >= min_baseline_age])
+
+# One sample per participant -> no repeated measures, so a fixed-effects GLM is appropriate
+# (not a mixed model). The single participant with two visits is reduced to their BASELINE (earliest) visit.
+n_before <- nrow(covar)
+covar <- covar %>% group_by(SubjectID) %>% slice_min(age_at_visit, n = 1, with_ties = FALSE) %>% ungroup()
+if (nrow(covar) < n_before)
+  message("  collapsed repeated visits: ", n_before, " -> ", nrow(covar), " samples (kept baseline visit)")
+
+# Apply the study exclusions from a restricted local input, never public code.
+# The approved exclusion list must be provided to reproduce the analysis.
+exclusion_file <- Sys.getenv("CSF_EXCLUSION_FILE", unset = "")
+if (!nzchar(exclusion_file)) {
+  exclusion_file <- file.path(data_dir, "private", "excluded_participant_ids.txt")
+}
+if (!file.exists(exclusion_file)) {
+  stop("Required private exclusion list is missing. Set CSF_EXCLUSION_FILE or provide data/private/excluded_participant_ids.txt. Do not proceed without the approved study exclusions.")
+}
+EXCLUDE_PIDNS <- unique(trimws(readLines(exclusion_file, warn = FALSE)))
+EXCLUDE_PIDNS <- EXCLUDE_PIDNS[nzchar(EXCLUDE_PIDNS)]
+if (!length(EXCLUDE_PIDNS)) {
+  stop("The approved private exclusion list must not be empty.")
+}
+if (!all(EXCLUDE_PIDNS %in% covar$source_subject_id)) {
+  stop("Private exclusion list does not match the eligible cohort. Check the approved inputs.")
+}
+n_before_excl <- nrow(covar)
+covar <- covar %>% filter(!source_subject_id %in% EXCLUDE_PIDNS)
+message("  applied approved study exclusions: ", n_before_excl - nrow(covar), " participant(s)")
+
+covar$group_var <- droplevels(covar$group_var)
+covar$Sex       <- droplevels(covar$Sex)
+
+expr_mat <- expr_mat_all[, intersect(colnames(expr_mat_all), covar$SampleId), drop = FALSE]
+covar    <- as.data.frame(covar[match(colnames(expr_mat), covar$SampleId), ])
+rownames(covar) <- covar$SampleId
+stopifnot(identical(colnames(expr_mat), covar$SampleId))
+message("  analysis set: ", ncol(expr_mat), " samples")
+print(table(covar$group_var, covar$Sex))
+```
+
+## Helper: fit one set of contrasts and write top tables
+
+```{r fit-helper}
+fit_and_write <- function(expr_mat, design, contrasts, meta_cols, out_dir, size_lookup) {
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+  cmat <- limma::makeContrasts(contrasts = unname(contrasts), levels = design)
+  colnames(cmat) <- names(contrasts)
+  fit <- eBayes(contrasts.fit(lmFit(expr_mat, design), cmat))
+  for (nm in names(contrasts)) {
+    tt <- topTable(fit, coef = nm, number = Inf, adjust.method = "BH", sort.by = "P")
+    tt <- tt %>% rownames_to_column("SomaKey") %>% left_join(ann, by = "SomaKey")
+    tt$contrast         <- nm
+    tt$comparison_group <- meta_cols[[nm]]$comparison
+    tt$reference_group  <- meta_cols[[nm]]$reference
+    tt$section          <- meta_cols[[nm]]$section
+    tt$n_comparison     <- size_lookup[[meta_cols[[nm]]$comparison_key]]
+    tt$n_reference      <- size_lookup[[meta_cols[[nm]]$reference_key]]
+    write_csv(tt, file.path(out_dir, sprintf("toptable_%s.csv", nm)))
+    message("    ", nm, ": ", sum(tt$adj.P.Val < 0.05, na.rm = TRUE), " proteins at FDR<0.05")
+  }
+}
+```
+
+## Part I - between-group comparisons (all participants)
+
+```{r fit-partI}
+message("[3/4] Part I: between-group contrasts (all participants)")
+dirI <- file.path(out_base, sprintf("glm_combined_baseAge%g", min_baseline_age))
+
+group_sizes <- covar %>% group_by(group_var) %>%
+  summarise(n_samples = n(), n_participants = n_distinct(SubjectID), .groups = "drop") %>%
+  arrange(match(group_var, levels(covar$group_var)))
+dir.create(dirI, recursive = TRUE, showWarnings = FALSE)
+write_csv(group_sizes, file.path(dirI, "group_sizes.csv"))
+size_lookup <- setNames(group_sizes$n_samples, as.character(group_sizes$group_var))
+
+# Cell-means design: ~ 0 + group + age + Sex.  Every contrast is a difference of group means.
+designI <- model.matrix(~ 0 + group_var + age_at_visit + Sex, covar)
+contrastsI <- c(
+  HC_vs_AD_spectrum          = "group_varHC - group_varAD_spectrum",
+  HC_vs_LB_spectrum          = "group_varHC - group_varLB_spectrum",
+  AD_spectrum_vs_LB_spectrum = "group_varAD_spectrum - group_varLB_spectrum")
+metaI <- list(
+  HC_vs_AD_spectrum          = list(comparison="HC", reference="AD_spectrum", comparison_key="HC", reference_key="AD_spectrum", section="between_group"),
+  HC_vs_LB_spectrum          = list(comparison="HC", reference="LB_spectrum", comparison_key="HC", reference_key="LB_spectrum", section="between_group"),
+  AD_spectrum_vs_LB_spectrum = list(comparison="AD_spectrum", reference="LB_spectrum", comparison_key="AD_spectrum", reference_key="LB_spectrum", section="between_group"))
+fit_and_write(expr_mat, designI, contrastsI, metaI, dirI, size_lookup)
+
+# protein_metadata.csv for GSEA (Protein + EntrezGeneSymbol, ADRC convention).
+protein_dict %>%
+  transmute(Protein = SomaKey, EntrezGeneSymbol, Target, TargetFullName, UniProt) %>%
+  write_csv(file.path(dirI, "protein_metadata.csv"))
+
+# assoc_input.rds for the Figure 4/5 association heatmaps (all participants).
+saveRDS(list(expr = expr_mat, covar = covar, ann = ann),
+        file.path(out_base, "assoc_input.rds"))
+```
+
+## Part II - male vs female within each group
+
+```{r fit-partII}
+message("[4/4] Part II: male-vs-female contrasts within each group")
+dirII <- file.path(out_base, sprintf("glm_combined_baseAge%g_sexcontrast", min_baseline_age))
+dir.create(dirII, recursive = TRUE, showWarnings = FALSE)
+
+for (g in levels(covar$group_var)) {
+  sub <- covar[covar$group_var == g, ]
+  sub$Sex <- droplevels(sub$Sex)
+  ntab <- table(sub$Sex)
+  if (!all(c("F", "M") %in% names(ntab)) || min(ntab[c("F","M")]) < 2L) {
+    message("    [skip] ", g, ": both sexes need >= 2 (have ", paste(names(ntab), ntab, collapse=", "), ")")
+    next
+  }
+  em <- expr_mat[, sub$SampleId, drop = FALSE]
+  # Cell-means on Sex within the group: ~ 0 + Sex + age.  Contrast = M - F.
+  designS <- model.matrix(~ 0 + Sex + age_at_visit, sub)
+  nm <- sprintf("sex_%s", g)
+  contrastsS <- setNames("SexM - SexF", nm)
+  metaS <- setNames(list(list(comparison="M", reference="F",
+                              comparison_key="M", reference_key="F",
+                              section="within_group_sex")), nm)
+  size_lookup_s <- c(M = as.integer(ntab["M"]), F = as.integer(ntab["F"]))
+  fit_and_write(em, designS, contrastsS, metaS, dirII, size_lookup_s)
+}
+
+message("\nDE step complete. Part I -> ", dirI, "\n              Part II -> ", dirII)
+```

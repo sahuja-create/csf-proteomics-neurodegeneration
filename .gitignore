@@ -47,3 +47,16 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Restricted local inputs and participant-level outputs
+/data/
+/private/
+/results/
+/figures/
+excluded_participant_ids.txt
+merged_lumipulse_check.csv
+assoc_input.rds
+*.rds
+*.RDS
+.env
+.env.*
